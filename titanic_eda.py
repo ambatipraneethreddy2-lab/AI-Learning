@@ -1,0 +1,224 @@
+"""
+Project 1: Titanic Exploratory Data Analysis
+Question: Who survived the Titanic, and why?
+
+Run:  python titanic_eda.py
+Output: printed statistics, charts saved in images/, cleaned data in titanic_clean.csv
+"""
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+# Always save outputs next to this script, whatever folder the terminal is in
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+sns.set_theme(style="whitegrid")
+pd.set_option("display.max_columns", 20)
+os.makedirs("images", exist_ok=True)
+
+URL = "https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv"
+DIED_SURVIVED = ["salmon", "seagreen"]
+CLASS_COLORS = ["#1f4e79", "#4f8fc0", "#9cc3e4"]  # 1st, 2nd, 3rd class
+
+
+def save(name):
+    """Save the current chart to images/ and close it."""
+    plt.tight_layout()
+    plt.savefig(f"images/{name}.png", dpi=120, bbox_inches="tight")
+    plt.close()
+    print(f"  -> saved images/{name}.png")
+
+
+def section(title):
+    print("\n" + "=" * 60 + f"\n{title}\n" + "=" * 60)
+
+
+# ---------------------------------------------------------------
+# Step 0: Load
+# ---------------------------------------------------------------
+df = pd.read_csv(URL)
+section("STEP 1: FIRST LOOK")
+print("Shape (rows, columns):", df.shape)
+print(df.head())
+df.info()
+print(df.describe().round(2))
+
+# ---------------------------------------------------------------
+# Step 2: Missing values
+# ---------------------------------------------------------------
+section("STEP 2: MISSING VALUES")
+missing = df.isnull().sum().sort_values(ascending=False)
+missing_pct = (missing / len(df) * 100).round(1)
+print(pd.DataFrame({"missing": missing, "percent": missing_pct}))
+
+missing_pct[missing_pct > 0].plot(kind="bar", color="salmon")
+plt.title("Percent of missing values per column")
+plt.ylabel("% missing")
+save("01_missing_values")
+
+# ---------------------------------------------------------------
+# Step 3: Clean
+# ---------------------------------------------------------------
+section("STEP 3: CLEANING")
+data = df.copy()
+data["HasCabin"] = data["Cabin"].notnull().astype(int)
+data["Age"] = data["Age"].fillna(
+    data.groupby(["Sex", "Pclass"])["Age"].transform("median")
+)
+data["Embarked"] = data["Embarked"].fillna(data["Embarked"].mode()[0])
+print("Missing after cleaning (Cabin is kept only as HasCabin):")
+print(data.drop(columns="Cabin").isnull().sum().sum(), "missing values left")
+
+# ---------------------------------------------------------------
+# Step 4: Feature engineering
+# ---------------------------------------------------------------
+data["FamilySize"] = data["SibSp"] + data["Parch"] + 1
+data["IsAlone"] = (data["FamilySize"] == 1).astype(int)
+data["AgeGroup"] = pd.cut(
+    data["Age"],
+    bins=[0, 12, 18, 30, 45, 60, 100],
+    labels=["Child 0-12", "Teen 13-18", "Young adult 19-30",
+            "Adult 31-45", "Middle age 46-60", "Senior 60+"],
+)
+data["Title"] = data["Name"].str.extract(r",\s*([^\.]+)\.")[0].str.strip()
+rare = data["Title"].value_counts()[lambda s: s < 10].index
+data["Title"] = data["Title"].replace(rare, "Rare")
+data["Deck"] = data["Cabin"].str[0].fillna("Unknown")
+
+# ---------------------------------------------------------------
+# Step 5: Questions
+# ---------------------------------------------------------------
+section("Q1: OVERALL SURVIVAL")
+print(f"Overall survival rate: {data['Survived'].mean():.1%}")
+sns.countplot(data=data, x="Survived", hue="Survived", palette=DIED_SURVIVED, legend=False)
+plt.xticks([0, 1], ["Died", "Survived"])
+plt.title("Survivors vs. deaths")
+save("02_overall_survival")
+
+section("Q2: SURVIVAL BY SEX")
+print(data.groupby("Sex")["Survived"].mean().round(3))
+sns.barplot(data=data, x="Sex", y="Survived", hue="Sex", palette="Set2", legend=False)
+plt.title("Survival rate by sex")
+plt.ylabel("Survival rate")
+save("03_survival_by_sex")
+
+section("Q3: SURVIVAL BY CLASS")
+print(data.groupby("Pclass")["Survived"].mean().round(3))
+sns.barplot(data=data, x="Pclass", y="Survived", hue="Pclass", palette=CLASS_COLORS, legend=False)
+plt.title("Survival rate by ticket class")
+plt.xlabel("Class (1 = first)")
+plt.ylabel("Survival rate")
+save("04_survival_by_class")
+
+section("Q4: SEX x CLASS")
+pivot = data.pivot_table(values="Survived", index="Sex", columns="Pclass", aggfunc="mean")
+print(pivot.round(3))
+sns.heatmap(pivot, annot=True, fmt=".0%", cmap="RdYlGn", vmin=0, vmax=1)
+plt.title("Survival rate by sex and class")
+save("05_sex_class_heatmap")
+
+section("Q5: SURVIVAL BY AGE")
+by_age = data.groupby("AgeGroup", observed=False)["Survived"].mean()
+print(by_age.round(3))
+by_age.plot(kind="bar", color="steelblue")
+plt.title("Survival rate by age group")
+plt.ylabel("Survival rate")
+plt.xticks(rotation=30, ha="right")
+save("06_survival_by_age_group")
+
+sns.histplot(data=data, x="Age", hue="Survived", bins=30, kde=True,
+             palette=DIED_SURVIVED, element="step")
+plt.title("Age distribution by survival (0 = died, 1 = survived)")
+save("07_age_distribution")
+
+section("Q6: FARE")
+print("Median fare by outcome:")
+print(data.groupby("Survived")["Fare"].median())
+sns.boxplot(data=data, x="Survived", y="Fare", hue="Survived", palette=DIED_SURVIVED, legend=False)
+plt.yscale("log")
+plt.xticks([0, 1], ["Died", "Survived"])
+plt.title("Fare paid (log scale) by survival")
+save("08_fare_by_survival")
+
+section("Q7: FAMILY SIZE")
+by_family = data.groupby("FamilySize")["Survived"].agg(["mean", "count"])
+print(by_family.round(3))
+print("\nAlone vs. with family:")
+print(data.groupby("IsAlone")["Survived"].mean().rename({0: "With family", 1: "Alone"}).round(3))
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+sns.barplot(data=data, x="FamilySize", y="Survived", color="mediumpurple", ax=axes[0])
+axes[0].set_title("Survival rate by family size")
+axes[0].set_ylabel("Survival rate")
+sns.barplot(data=data, x="IsAlone", y="Survived", hue="IsAlone", palette="Set2", legend=False, ax=axes[1])
+axes[1].set_xticks([0, 1], ["With family", "Alone"])
+axes[1].set_xlabel("")
+axes[1].set_title("Alone vs. with family")
+axes[1].set_ylabel("Survival rate")
+save("09_family_size")
+
+section("Q8: TITLE AND PORT")
+by_title = data.groupby("Title")["Survived"].agg(["mean", "count"]).sort_values("mean", ascending=False)
+print(by_title.round(3))
+print("\nSurvival by port:")
+print(data.groupby("Embarked")["Survived"].mean().round(3))
+print("\nClass mix per port (share of passengers):")
+print(pd.crosstab(data["Embarked"], data["Pclass"], normalize="index").round(2))
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+order = by_title.index
+sns.barplot(data=data, x="Title", y="Survived", order=order, color="teal", ax=axes[0])
+axes[0].set_title("Survival rate by title")
+axes[0].set_ylabel("Survival rate")
+port_names = data["Embarked"].map({"S": "Southampton", "C": "Cherbourg", "Q": "Queenstown"})
+sns.barplot(data=data.assign(Port=port_names), x="Port", y="Survived", hue="Pclass",
+            palette=CLASS_COLORS, ax=axes[1])
+axes[1].set_title("Survival by port, split by class")
+axes[1].set_ylabel("Survival rate")
+save("10_title_and_port")
+
+section("Q9: CORRELATIONS")
+num_cols = ["Survived", "Pclass", "Age", "SibSp", "Parch", "Fare", "FamilySize", "IsAlone", "HasCabin"]
+corr = data[num_cols].corr()
+print("Correlation with Survived:")
+print(corr["Survived"].drop("Survived").sort_values(ascending=False).round(2))
+plt.figure(figsize=(9, 7))
+sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm", center=0)
+plt.title("Correlation between numeric features")
+save("11_correlations")
+
+# ---------------------------------------------------------------
+# Bonus: deck, and children by class
+# ---------------------------------------------------------------
+section("BONUS: DECK AND CHILDREN BY CLASS")
+print(data.groupby("Deck")["Survived"].agg(["mean", "count"]).round(3))
+children = data[data["Age"] <= 12]
+print("\nChildren (12 and under) survival by class:")
+print(children.groupby("Pclass")["Survived"].agg(["mean", "count"]).round(3))
+
+# Summary dashboard: 4 key charts in one figure (good for the README)
+fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+sns.barplot(data=data, x="Sex", y="Survived", hue="Sex", palette="Set2", legend=False, ax=axes[0, 0])
+axes[0, 0].set_title("By sex")
+sns.barplot(data=data, x="Pclass", y="Survived", hue="Pclass", palette=CLASS_COLORS, legend=False, ax=axes[0, 1])
+axes[0, 1].set_title("By class")
+by_age.plot(kind="bar", color="steelblue", ax=axes[1, 0])
+axes[1, 0].set_title("By age group")
+axes[1, 0].tick_params(axis="x", rotation=30)
+sns.barplot(data=data, x="FamilySize", y="Survived", color="mediumpurple", ax=axes[1, 1])
+axes[1, 1].set_title("By family size")
+for ax in axes.flat:
+    ax.set_ylabel("Survival rate")
+fig.suptitle("Titanic: who survived?", fontsize=16)
+save("00_summary_dashboard")
+
+# ---------------------------------------------------------------
+# Step 6: Save cleaned data
+# ---------------------------------------------------------------
+data.to_csv("titanic_clean.csv", index=False)
+section("DONE")
+print(f"Saved titanic_clean.csv ({data.shape[0]} rows, {data.shape[1]} columns)")
+print("Charts are in the images/ folder. Now write your 5 findings in the README.")
